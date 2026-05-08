@@ -90,31 +90,59 @@ st.markdown(f'<p style="color:#ff0000; font-size:0.7rem; margin:0;">PERIOD: {cur
 filtered = df[df['month_year'] == current_m]
 
 # B. 地球背景 (填滿整個視窗)
-# 確保資料格式正確：排除 NaN 並限制點的數量提升效能
-globe_df = filtered[['latitude', 'longitude', 'infected']].dropna().sample(n=min(len(filtered), 2000))
+# 1. 關鍵修改：除了經緯度，必須把 admin_region 和 country 也傳進 JSON
+globe_df = filtered[['latitude', 'longitude', 'infected', 'admin_region', 'country', 'zombified', 'deaths']].dropna()
+# 為了效能與歸位效果，建議使用我們清洗過的數據，這裡限制樣本數或直接呈現
 data_json = globe_df.to_json(orient='records')
 
 globe_js = f"""
 <div id="globeViz" class="full-bg"></div>
 <script src="//unpkg.com/globe.gl"></script>
 <script>
+    const gData = {data_json};
+    const maxInf = Math.max(...gData.map(d => d.infected));
+
     const world = Globe()
       (document.getElementById('globeViz'))
       .globeImageUrl('//unpkg.com/three-globe/example/img/earth-dark.jpg')
       .backgroundColor('#000000')
       .showAtmosphere(true)
       .atmosphereColor('#ff0000')
-      .pointsData({data_json})
+      
+      // 設定數據點
+      .pointsData(gData)
       .pointLat('latitude')
       .pointLng('longitude')
       .pointColor(() => '#ff0000')
+      
+      // 調整高度：根據感染人數讓 Bar 長出來 (高度設為 0.01~0.5 之間)
+      .pointAltitude(d => Math.max(0.01, (d.infected / maxInf) * 0.5))
       .pointRadius(0.2)
-      .pointAltitude(0.01)
-      .pointsMerge(true);
+      .pointsMerge(false) // 設為 false 才能個別顯示 Tooltip
+
+      // 【核心修改】：設定懸浮標籤 (Tooltip)
+      .pointLabel(d => `
+        <div style="
+            background: rgba(0,0,0,0.85); 
+            color: #ff0000; 
+            padding: 12px; 
+            border: 1px solid #ff0000; 
+            font-family: 'Courier New', Courier, monospace;
+            min-width: 150px;
+        ">
+            <div style="font-weight: bold; font-size: 14px; border-bottom: 1px solid #ff0000; padding-bottom: 5px; margin-bottom: 5px;">
+                LOC: ${{d.admin_region}} (${{d.country}})
+            </div>
+            <div style="font-size: 12px; color: #ccc;">
+                INFECTED: <span style="color: #ff0000;">${{Number(d.infected).toLocaleString()}}</span><br/>
+                DEATHS: ${{Number(d.deaths).toLocaleString()}}<br/>
+                ZOMBIFIED: ${{Number(d.zombified).toLocaleString()}}
+            </div>
+        </div>
+      `);
     
     world.controls().autoRotate = true;
     world.controls().autoRotateSpeed = 0.5;
-    world.pointLabel(d => `INFECTED: ${{d.infected}}`);
 </script>
 <style>body {{ margin: 0; }}</style>
 """
