@@ -1,183 +1,93 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import streamlit.components.v1 as components
+import json
 
-# 1. 強制設定頁面
-st.set_page_config(page_title="SURVEILLANCE", layout="wide", initial_sidebar_state="collapsed")
+# 設定頁面配置
+st.set_page_config(layout="wide", page_title="T-Virus Global Outbreak Dashboard")
 
-# 2. 徹底重構 CSS：將 Streamlit 原生容器全部透明化並鎖定位置
-st.markdown("""
-<style>
-    /* 移除原生間距與背景 */
-    .stApp { background-color: #000 !important; }
-    .block-container { padding: 0 !important; max-width: 100% !important; }
-    header, footer, #MainMenu { visibility: hidden; }
+# --- 1. 硬編碼：49 個行政區的正確官方座標維度表 ---
+# 這是為了防止 CSV 數據污染，強制讓座標歸位
+GEO_LOOKUP = {
+    "Base_Echo": [-80.0, 0.0], "Base_Omega": [-85.0, 10.0], "Rockfort_Island": [-67.6167, 62.8667],
+    "Brisbane": [-27.4698, 153.0251], "Melbourne": [-37.8136, 144.9631], "Perth": [-31.9505, 115.8605], "Sydney": [-33.8688, 151.2093],
+    "Amazon_Region": [-3.4653, -62.2159], "Brasilia": [-15.7975, -47.8919], "Rio_de_Janeiro": [-22.9068, -43.1729], "Sao_Paulo": [-23.5505, -46.6333],
+    "Montreal": [45.5017, -73.5673], "Ottawa": [45.4215, -75.6972], "Toronto": [43.6532, -79.3832], "Vancouver": [49.2827, -123.1207],
+    "Bordeaux": [44.8378, -0.5792], "Lyon": [45.764, 4.8357], "Marseille": [43.2965, 5.3698], "Paris_District": [48.8566, 2.3522],
+    "Berlin": [52.52, 13.405], "Frankfurt": [50.1109, 8.6821], "Hamburg": [53.5511, 9.9937], "Munich": [48.1351, 11.582],
+    "Akita_Pref": [39.7198, 140.1025], "Hokkaido": [43.0642, 141.3469], "Kyoto": [35.0116, 135.7681], "Okinawa": [26.2124, 127.6809], "Osaka": [34.6937, 135.5023], "Tokyo": [35.6895, 139.6917],
+    "Moscow": [55.7558, 37.6173], "Saint_Petersburg": [59.9311, 30.3609], "Siberia_Zone": [60.0, 105.0], "Vladivostok": [43.1155, 131.8853],
+    "Hualien_County": [23.9771, 121.6044], "Kaohsiung_City": [22.6273, 120.3014], "Taichung_City": [24.1477, 120.6736], "Tainan_City": [22.9997, 120.227], "Taipei_City": [25.033, 121.5654],
+    "Birmingham": [52.4862, -1.8904], "Edinburgh": [55.9533, -3.1883], "London_City": [51.5074, -0.1278], "Manchester": [53.4808, -2.2426],
+    "Arklay_County": [38.8333, -97.5333], "California": [36.7783, -119.4179], "Florida": [27.6648, -81.5158], "Illinois": [40.6331, -89.3985], "New_York": [40.7128, -74.006], "Raccoon_City": [38.8333, -97.5333], "Texas": [31.9686, -99.9018]
+}
 
-    /* 全螢幕背景容器 */
-    .full-bg {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        z-index: -1;
-    }
-
-    /* 左側懸浮面板 */
-    .floating-left {
-        position: fixed;
-        top: 100px;
-        left: 30px;
-        width: 280px;
-        z-index: 99;
-        background: rgba(0, 0, 0, 0.4);
-        padding: 20px;
-        border-left: 1px solid #ff0000;
-        backdrop-filter: blur(5px);
-    }
-
-    /* 右側懸浮面板 */
-    .floating-right {
-        position: fixed;
-        top: 100px;
-        right: 30px;
-        width: 280px;
-        z-index: 99;
-        background: rgba(0, 0, 0, 0.4);
-        padding: 20px;
-        border-right: 1px solid #ff0000;
-        backdrop-filter: blur(5px);
-    }
-
-    /* 左上角時間滑塊 */
-    .timeline-box {
-        position: fixed;
-        top: 25px;
-        left: 30px;
-        width: 320px;
-        z-index: 100;
-        background: rgba(10, 10, 10, 0.8);
-        padding: 5px 15px;
-        border: 1px solid #333;
-    }
-
-    /* 文字樣式優化 */
-    h3 { color: #ff0000 !important; font-size: 0.8rem !important; letter-spacing: 3px; font-weight: 300 !important; }
-    .stMetric div { color: #ff0000 !important; font-size: 1.8rem !important; }
-    .stMetric label { color: #666 !important; text-transform: uppercase; font-size: 0.7rem !important; }
-</style>
-""", unsafe_allow_html=True)
-
-# 3. 數據加載
+# --- 2. 數據加載與即時校正 ---
 @st.cache_data
-def load_surveillance_data():
-    df = pd.read_csv('t_virus_global_outbreak_30k.csv')
-    df['date'] = pd.to_datetime(df['date'])
-    df['month_year'] = df['date'].dt.to_period('M').astype(str)
+def load_data():
+    df = pd.read_csv('t_virus_global_outbreak_30k_cleaned.csv')
+    # 強制修正：不使用 CSV 的經緯度，直接用維度表覆蓋
+    df['latitude'] = df['admin_region'].map(lambda x: GEO_LOOKUP.get(x, [0,0])[0])
+    df['longitude'] = df['admin_region'].map(lambda x: GEO_LOOKUP.get(x, [0,0])[1])
     return df
 
-df = load_surveillance_data()
-months = sorted(df['month_year'].unique())
+df = load_data()
 
-# --- 介面組件開始 ---
+# 側邊欄控制
+st.sidebar.title("病毒擴散控制面板")
+month_list = sorted(df['month_year'].unique())
+selected_month = st.sidebar.select_slider("選擇時間線", options=month_list)
 
-# A. 時間滑塊 (左上)
-st.markdown('<div class="timeline-box">', unsafe_allow_html=True)
-current_m = st.select_slider("TIMELINE", options=months, label_visibility="collapsed")
-st.markdown(f'<p style="color:#ff0000; font-size:0.7rem; margin:0;">PERIOD: {current_m}</p></div>', unsafe_allow_html=True)
+# --- 3. 數據聚合 (Aggregation) ---
+# 將 3 萬筆資料收縮成 49 個區域的加總數據，這能提升 3D 地球儀效能並確保位置精確
+filtered_df = df[df['month_year'] == selected_month]
+agg_data = filtered_df.groupby(['admin_region', 'country', 'latitude', 'longitude']).agg({
+    'infected': 'sum',
+    'deaths': 'sum',
+    'zombified': 'sum'
+}).reset_index()
 
-filtered = df[df['month_year'] == current_m]
+# 轉換為 JSON 給 Globe.gl 使用
+points_data = agg_data.to_json(orient='records')
 
-# B. 地球背景 (填滿整個視窗)
-# 1. 關鍵修改：除了經緯度，必須把 admin_region 和 country 也傳進 JSON
-globe_df = filtered[['latitude', 'longitude', 'infected', 'admin_region', 'country', 'zombified', 'deaths']].dropna()
-# 為了效能與歸位效果，建議使用我們清洗過的數據，這裡限制樣本數或直接呈現
-data_json = globe_df.to_json(orient='records')
-
-globe_js = f"""
-<div id="globeViz" class="full-bg"></div>
+# --- 4. 3D 地球儀 HTML/JS ---
+globe_html = f"""
+<div id="globeViz"></div>
 <script src="//unpkg.com/globe.gl"></script>
 <script>
-    const gData = {data_json};
-    const maxInf = Math.max(...gData.map(d => d.infected));
-
+    const gData = {points_data};
+    
     const world = Globe()
       (document.getElementById('globeViz'))
-      .globeImageUrl('//unpkg.com/three-globe/example/img/earth-dark.jpg')
-      .backgroundColor('#000000')
-      .showAtmosphere(true)
-      .atmosphereColor('#ff0000')
-      
-      // 設定數據點
+      .globeImageUrl('//unpkg.com/three-globe/example/img/earth-night.jpg')
+      .bumpImageUrl('//unpkg.com/three-globe/example/img/earth-topology.png')
+      .backgroundImageUrl('//unpkg.com/three-globe/example/img/night-sky.png')
       .pointsData(gData)
       .pointLat('latitude')
       .pointLng('longitude')
       .pointColor(() => '#ff0000')
-      
-      // 調整高度：根據感染人數讓 Bar 長出來 (高度設為 0.01~0.5 之間)
-      .pointAltitude(d => Math.max(0.01, (d.infected / maxInf) * 0.5))
-      .pointRadius(0.2)
-      .pointsMerge(false) // 設為 false 才能個別顯示 Tooltip
-
-      // 【核心修改】：設定懸浮標籤 (Tooltip)
+      .pointAltitude(d => Math.log10(d.infected + 1) * 0.05)
+      .pointRadius(0.5)
+      .pointsTransitionDuration(500)
       .pointLabel(d => `
-        <div style="
-            background: rgba(0,0,0,0.85); 
-            color: #ff0000; 
-            padding: 12px; 
-            border: 1px solid #ff0000; 
-            font-family: 'Courier New', Courier, monospace;
-            min-width: 150px;
-        ">
-            <div style="font-weight: bold; font-size: 14px; border-bottom: 1px solid #ff0000; padding-bottom: 5px; margin-bottom: 5px;">
-                LOC: ${{d.admin_region}} (${{d.country}})
-            </div>
-            <div style="font-size: 12px; color: #ccc;">
-                INFECTED: <span style="color: #ff0000;">${{Number(d.infected).toLocaleString()}}</span><br/>
-                DEATHS: ${{Number(d.deaths).toLocaleString()}}<br/>
-                ZOMBIFIED: ${{Number(d.zombified).toLocaleString()}}
-            </div>
+        <div style="background: rgba(0,0,0,0.8); color: white; padding: 10px; border-radius: 5px;">
+          <b>${{d.admin_region}}, ${{d.country}}</b><br/>
+          確診: ${{d.infected.toLocaleString()}}<br/>
+          死亡: ${{d.deaths.toLocaleString()}}<br/>
+          殭屍化: ${{d.zombified.toLocaleString()}}
         </div>
       `);
-    
+
     world.controls().autoRotate = true;
     world.controls().autoRotateSpeed = 0.5;
 </script>
-<style>body {{ margin: 0; }}</style>
+<style> body {{ margin: 0; }} </style>
 """
-components.html(globe_js, height=2000) # 給予足夠高度但讓 CSS 控制固定定位
 
-# C. 左側面板
-st.markdown('<div class="floating-left">', unsafe_allow_html=True)
-st.subheader("KEY METRICS")
-st.metric("INFECTED", f"{filtered['infected'].sum():,}")
-st.metric("MORTALITY", f"{(filtered['deaths'].sum()/filtered['infected'].sum()*100):.1f}%")
+# 渲染地球儀
+st.title(f"T-Virus 全球擴散情勢 - {selected_month}")
+components.html(globe_html, height=600)
 
-st.subheader("DEPLOYMENT")
-# 強制灰色與紅色的簡約圖表
-fig_bar = px.bar(filtered.groupby('country')['ut_forces'].sum().reset_index().nlargest(5, 'ut_forces'), 
-                 x='ut_forces', y='country', orientation='h', template="plotly_dark")
-fig_bar.update_traces(marker_color='#ff0000')
-fig_bar.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', 
-                     height=150, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, yaxis_title=None)
-st.plotly_chart(fig_bar, use_container_width=True, config={'displayModeBar': False})
-st.markdown('</div>', unsafe_allow_html=True)
-
-# D. 右側面板
-st.markdown('<div class="floating-right">', unsafe_allow_html=True)
-st.subheader("TREND")
-hist = df.groupby('month_year')['infected'].sum().reset_index()
-fig_line = px.line(hist, x='month_year', y='infected', template="plotly_dark")
-fig_line.update_traces(line_color='#ff0000', line_width=1)
-fig_line.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', 
-                      height=150, margin=dict(l=0,r=0,t=0,b=0), xaxis_visible=False, yaxis_visible=False)
-st.plotly_chart(fig_line, use_container_width=True, config={'displayModeBar': False})
-
-st.subheader("STRAIN")
-pie_val = filtered[['zombified', 'mutants', 'deaths']].sum()
-fig_pie = px.pie(values=pie_val.values, names=pie_val.index, hole=.8, template="plotly_dark")
-fig_pie.update_traces(marker=dict(colors=['#333', '#ff0000', '#111']), textinfo='none')
-fig_pie.update_layout(paper_bgcolor='rgba(0,0,0,0)', height=150, showlegend=False, margin=dict(l=0,r=0,t=0,b=0))
-st.plotly_chart(fig_pie, use_container_width=True, config={'displayModeBar': False})
-st.markdown('</div>', unsafe_allow_html=True)
+# 顯示下方詳細數據表
+st.subheader("行政區數據詳情")
+st.dataframe(agg_data.drop(columns=['latitude', 'longitude']), use_container_width=True)
